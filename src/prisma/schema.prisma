@@ -1,0 +1,545 @@
+generator client {
+  provider   = "prisma-client-js"
+  engineType = "client"
+  output     = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---- Enums ----
+
+enum Role {
+  CUSTOMER
+  MERCHANT_OWNER
+  MERCHANT_STAFF
+  RIDER
+  ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+enum MerchantStatus {
+  PENDING_APPROVAL
+  APPROVED
+  SUSPENDED
+  REJECTED
+}
+
+enum ProductStatus {
+  ACTIVE
+  OUT_OF_STOCK
+  ARCHIVED
+}
+
+enum OrderStatus {
+  PENDING
+  ACCEPTED
+  PREPARING
+  READY_FOR_PICKUP
+  PICKED_UP
+  DELIVERED
+  CANCELLED
+  REJECTED
+}
+
+enum PaymentMethod {
+  COD
+  GCASH
+  MAYA
+  CARD
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+}
+
+enum DeliveryStatus {
+  UNASSIGNED
+  OFFERED
+  ACCEPTED
+  ARRIVED_AT_PICKUP
+  PICKED_UP
+  IN_TRANSIT
+  DELIVERED
+  FAILED
+}
+
+enum RiderAvailability {
+  OFFLINE
+  AVAILABLE
+  ON_DELIVERY
+}
+
+enum LedgerEntryType {
+  CREDIT
+  DEBIT
+}
+
+enum SettlementStatus {
+  PENDING
+  PAID
+  FAILED
+}
+
+enum PayeeType {
+  MERCHANT
+  RIDER
+}
+
+enum DiscountType {
+  PERCENTAGE
+  FIXED_AMOUNT
+}
+
+// ---- Identity ----
+
+model User {
+  id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name         String
+  email        String     @unique
+  phone        String?    @unique
+  passwordHash String     @map("password_hash")
+  role         Role       @default(CUSTOMER)
+  status       UserStatus @default(ACTIVE)
+  createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  refreshTokens       RefreshToken[]
+  addresses           Address[]
+  cart                Cart?
+  orders              Order[]
+  ownedMerchants      MerchantProfile[]
+  merchantMemberships MerchantMember[]
+  riderProfile        RiderProfile?
+
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz(6)
+  revokedAt DateTime? @map("revoked_at") @db.Timestamptz(6)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+model AuditLog {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String?  @map("user_id") @db.Uuid
+  action    String
+  entity    String
+  entityId  String?  @map("entity_id")
+  meta      Json?
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([userId, createdAt])
+  @@map("audit_log")
+}
+
+// ---- Merchants ----
+
+model MerchantProfile {
+  id           String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  businessName String         @map("business_name")
+  ownerUserId  String         @map("owner_user_id") @db.Uuid
+  status       MerchantStatus @default(PENDING_APPROVAL)
+  createdAt    DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  owner           User             @relation(fields: [ownerUserId], references: [id])
+  members         MerchantMember[]
+  branches        MerchantBranch[]
+  commissionRules CommissionRule[]
+  ledger          MerchantLedger[]
+
+  @@index([status])
+  @@index([ownerUserId])
+  @@map("merchant_profiles")
+}
+
+model MerchantMember {
+  merchantId String @map("merchant_id") @db.Uuid
+  userId     String @map("user_id") @db.Uuid
+  role       String // "OWNER" | "MANAGER" | "STAFF"
+
+  merchant MerchantProfile @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  user     User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([merchantId, userId])
+  @@map("merchant_members")
+}
+
+model MerchantBranch {
+  id         String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  merchantId String         @map("merchant_id") @db.Uuid
+  name       String
+  address    String
+  latitude   Float
+  longitude  Float
+  status     MerchantStatus @default(PENDING_APPROVAL)
+  createdAt  DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  merchant MerchantProfile @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  hours    MerchantHours[]
+  products Product[]
+  orders   Order[]
+
+  @@index([merchantId])
+  @@map("merchant_branches")
+}
+
+model MerchantHours {
+  id        String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  branchId  String @map("branch_id") @db.Uuid
+  dayOfWeek Int    @map("day_of_week") // 0 = Sunday ... 6 = Saturday
+  openTime  String @map("open_time") // "HH:mm"
+  closeTime String @map("close_time") // "HH:mm"
+
+  branch MerchantBranch @relation(fields: [branchId], references: [id], onDelete: Cascade)
+
+  @@index([branchId])
+  @@map("merchant_hours")
+}
+
+// ---- Catalog & shopping ----
+
+model Category {
+  id   String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name String @unique
+
+  products Product[]
+
+  @@map("categories")
+}
+
+model Product {
+  id         String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  branchId   String        @map("branch_id") @db.Uuid
+  categoryId String?       @map("category_id") @db.Uuid
+  name       String
+  price      Decimal       @db.Decimal(14, 2)
+  status     ProductStatus @default(ACTIVE)
+  createdAt  DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  branch     MerchantBranch    @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  category   Category?         @relation(fields: [categoryId], references: [id])
+  variants   ProductVariant[]
+  inventory  ProductInventory?
+  cartItems  CartItem[]
+  orderItems OrderItem[]
+
+  @@index([branchId, status])
+  @@map("products")
+}
+
+model ProductVariant {
+  id              String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  productId       String  @map("product_id") @db.Uuid
+  name            String
+  priceAdjustment Decimal @default(0) @map("price_adjustment") @db.Decimal(14, 2)
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([productId])
+  @@map("product_variants")
+}
+
+model ProductInventory {
+  productId   String  @id @map("product_id") @db.Uuid
+  quantity    Int     @default(0)
+  isAvailable Boolean @default(true) @map("is_available")
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@map("product_inventory")
+}
+
+model Address {
+  id        String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String  @map("user_id") @db.Uuid
+  label     String?
+  address   String
+  latitude  Float
+  longitude Float
+
+  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  orders Order[]
+
+  @@index([userId])
+  @@map("addresses")
+}
+
+model Cart {
+  id     String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId String @unique @map("user_id") @db.Uuid
+
+  user  User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items CartItem[]
+
+  @@map("carts")
+}
+
+model CartItem {
+  id        String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  cartId    String @map("cart_id") @db.Uuid
+  productId String @map("product_id") @db.Uuid
+  quantity  Int    @default(1)
+
+  cart    Cart    @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id])
+
+  @@index([cartId])
+  @@map("cart_items")
+}
+
+// ---- Phase 2 groundwork (tables exist; endpoints come next) ----
+
+model Order {
+  id          String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orderNumber String      @unique @map("order_number")
+  customerId  String      @map("customer_id") @db.Uuid
+  branchId    String      @map("branch_id") @db.Uuid
+  addressId   String      @map("address_id") @db.Uuid
+  subtotal    Decimal     @db.Decimal(14, 2)
+  deliveryFee Decimal     @map("delivery_fee") @db.Decimal(14, 2)
+  serviceFee  Decimal     @default(0) @map("service_fee") @db.Decimal(14, 2)
+  total       Decimal     @db.Decimal(14, 2)
+  status      OrderStatus @default(PENDING)
+  createdAt   DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime    @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  customer       User                 @relation(fields: [customerId], references: [id])
+  branch         MerchantBranch       @relation(fields: [branchId], references: [id])
+  address        Address              @relation(fields: [addressId], references: [id])
+  items          OrderItem[]
+  statusHistory  OrderStatusHistory[]
+  payment        Payment?
+  delivery       Delivery?
+  merchantLedger MerchantLedger[]
+
+  @@index([customerId, createdAt])
+  @@index([branchId, status])
+  @@map("orders")
+}
+
+model OrderItem {
+  id          String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orderId     String  @map("order_id") @db.Uuid
+  productId   String  @map("product_id") @db.Uuid
+  productName String  @map("product_name") // snapshot at checkout time
+  unitPrice   Decimal @map("unit_price") @db.Decimal(14, 2) // snapshot at checkout time
+  quantity    Int
+
+  order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id])
+
+  @@index([orderId])
+  @@map("order_items")
+}
+
+model OrderStatusHistory {
+  id        String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orderId   String      @map("order_id") @db.Uuid
+  status    OrderStatus
+  changedAt DateTime    @default(now()) @map("changed_at") @db.Timestamptz(6)
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@map("order_status_history")
+}
+
+model Payment {
+  id                String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orderId           String        @unique @map("order_id") @db.Uuid
+  method            PaymentMethod
+  amount            Decimal       @db.Decimal(14, 2)
+  status            PaymentStatus @default(PENDING)
+  providerReference String?       @map("provider_reference")
+  createdAt         DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  order   Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  refunds Refund[]
+
+  @@map("payments")
+}
+
+model Refund {
+  id        String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  paymentId String        @map("payment_id") @db.Uuid
+  amount    Decimal       @db.Decimal(14, 2)
+  status    PaymentStatus @default(PENDING)
+  createdAt DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  payment Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  @@index([paymentId])
+  @@map("refunds")
+}
+
+// ---- Riders & dispatch ----
+
+model RiderProfile {
+  id                 String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId             String            @unique @map("user_id") @db.Uuid
+  availabilityStatus RiderAvailability @default(OFFLINE) @map("availability_status")
+  createdAt          DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user       User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deliveries Delivery[]
+  ledger     RiderLedger[]
+
+  @@map("rider_profiles")
+}
+
+model Delivery {
+  id          String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orderId     String         @unique @map("order_id") @db.Uuid
+  riderId     String?        @map("rider_id") @db.Uuid
+  status      DeliveryStatus @default(UNASSIGNED)
+  deliveryFee Decimal        @map("delivery_fee") @db.Decimal(14, 2)
+  createdAt   DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  order           Order                     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  rider           RiderProfile?             @relation(fields: [riderId], references: [id])
+  locationHistory DeliveryLocationHistory[]
+  proof           DeliveryProof[]
+  riderLedger     RiderLedger[]
+
+  @@index([riderId, status])
+  @@map("deliveries")
+}
+
+model DeliveryLocationHistory {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  deliveryId String   @map("delivery_id") @db.Uuid
+  latitude   Float
+  longitude  Float
+  recordedAt DateTime @default(now()) @map("recorded_at") @db.Timestamptz(6)
+
+  delivery Delivery @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
+
+  @@index([deliveryId, recordedAt])
+  @@map("delivery_location_history")
+}
+
+model DeliveryProof {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  deliveryId String   @map("delivery_id") @db.Uuid
+  proofType  String   @map("proof_type") // "PHOTO" | "PIN" | "SIGNATURE"
+  fileUrl    String?  @map("file_url")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  delivery Delivery @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
+
+  @@index([deliveryId])
+  @@map("delivery_proof")
+}
+
+// ---- Finance & settlements ----
+
+model CommissionRule {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  merchantId     String   @map("merchant_id") @db.Uuid
+  commissionRate Decimal  @map("commission_rate") @db.Decimal(5, 2) // percent, e.g. 12.00
+  effectiveFrom  DateTime @default(now()) @map("effective_from") @db.Timestamptz(6)
+
+  merchant MerchantProfile @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@index([merchantId, effectiveFrom])
+  @@map("commission_rules")
+}
+
+model MerchantLedger {
+  id         String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  merchantId String          @map("merchant_id") @db.Uuid
+  orderId    String?         @map("order_id") @db.Uuid
+  amount     Decimal         @db.Decimal(14, 2)
+  entryType  LedgerEntryType @map("entry_type")
+  createdAt  DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  merchant        MerchantProfile  @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  order           Order?           @relation(fields: [orderId], references: [id])
+  settlementItems SettlementItem[]
+
+  @@index([merchantId, createdAt])
+  @@map("merchant_ledger")
+}
+
+model RiderLedger {
+  id         String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  riderId    String          @map("rider_id") @db.Uuid
+  deliveryId String?         @map("delivery_id") @db.Uuid
+  amount     Decimal         @db.Decimal(14, 2)
+  entryType  LedgerEntryType @map("entry_type")
+  createdAt  DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  rider           RiderProfile     @relation(fields: [riderId], references: [id], onDelete: Cascade)
+  delivery        Delivery?        @relation(fields: [deliveryId], references: [id])
+  settlementItems SettlementItem[]
+
+  @@index([riderId, createdAt])
+  @@map("rider_ledger")
+}
+
+model Settlement {
+  id        String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  payeeType PayeeType        @map("payee_type")
+  payeeId   String           @map("payee_id") @db.Uuid
+  amount    Decimal          @db.Decimal(14, 2)
+  status    SettlementStatus @default(PENDING)
+  createdAt DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  items SettlementItem[]
+
+  @@index([payeeType, payeeId])
+  @@map("settlements")
+}
+
+// A settlement item points at EITHER a merchant ledger entry OR a rider ledger entry,
+// so it has its own id (a composite key can't include optional columns).
+model SettlementItem {
+  id               String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  settlementId     String  @map("settlement_id") @db.Uuid
+  merchantLedgerId String? @map("merchant_ledger_id") @db.Uuid
+  riderLedgerId    String? @map("rider_ledger_id") @db.Uuid
+
+  settlement     Settlement      @relation(fields: [settlementId], references: [id], onDelete: Cascade)
+  merchantLedger MerchantLedger? @relation(fields: [merchantLedgerId], references: [id])
+  riderLedger    RiderLedger?    @relation(fields: [riderLedgerId], references: [id])
+
+  @@index([settlementId])
+  @@map("settlement_items")
+}
+
+// ---- Promotions ----
+
+model Promotion {
+  id            String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code          String       @unique
+  discountType  DiscountType @map("discount_type")
+  discountValue Decimal      @map("discount_value") @db.Decimal(14, 2)
+  isActive      Boolean      @default(true) @map("is_active")
+  startsAt      DateTime?    @map("starts_at") @db.Timestamptz(6)
+  endsAt        DateTime?    @map("ends_at") @db.Timestamptz(6)
+
+  @@map("promotions")
+}
