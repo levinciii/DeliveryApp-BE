@@ -8,6 +8,11 @@ const schema = z.object({
   JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 characters'),
   ACCESS_TTL_SECONDS: z.coerce.number().int().positive().default(900),
   REFRESH_TTL_DAYS: z.coerce.number().int().positive().default(30),
+  // Order pricing (PHP). These are placeholder defaults, not market rates: set your own in .env.
+  DELIVERY_BASE_FEE: z.coerce.number().nonnegative().default(40),
+  DELIVERY_FEE_PER_KM: z.coerce.number().nonnegative().default(10),
+  SERVICE_FEE: z.coerce.number().nonnegative().default(10),
+  MAX_DELIVERY_KM: z.coerce.number().positive().default(15),
   ALLOWED_ORIGINS: z
     .string()
     .default('')

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { moneyAmount, pagination } from './common.model.js';
 import { registerSchema } from './auth.model.js';
 import { createProductSchema } from './product.model.js';
+import { listBranchesQuery } from './branch.model.js';
 
 test('moneyAmount accepts numbers and strings with up to 2 decimals', () => {
   assert.equal(moneyAmount.parse(150), '150');
@@ -37,4 +38,11 @@ test('product price is normalised to a string', () => {
     price: 150,
   });
   assert.equal(parsed.price, '150');
+});
+
+test('branch directory query: search is trimmed and optional, pagination applies', () => {
+  assert.deepEqual(listBranchesQuery.parse({}), { page: 1, pageSize: 20 });
+  assert.equal(listBranchesQuery.parse({ search: '  adobo ' }).search, 'adobo');
+  assert.equal(listBranchesQuery.safeParse({ search: 'x'.repeat(61) }).success, false);
+  assert.equal(listBranchesQuery.safeParse({ pageSize: '101' }).success, false);
 });

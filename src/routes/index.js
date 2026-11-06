@@ -6,7 +6,11 @@ import authRoutes from './auth.routes.js';
 import profileRoutes from './profile.routes.js';
 import categoryRoutes from './category.routes.js';
 import merchantRoutes from './merchant.routes.js';
+import branchRoutes from './branch.routes.js';
 import productRoutes from './product.routes.js';
+import addressRoutes from './address.routes.js';
+import cartRoutes from './cart.routes.js';
+import orderRoutes from './order.routes.js';
 
 const router = express.Router();
 
@@ -21,6 +25,10 @@ router.use(authenticate);
 router.use('/profile', profileRoutes);
 router.use('/categories', categoryRoutes);
 router.use('/merchants', merchantRoutes);
+router.use('/branches', branchRoutes);
 router.use('/products', productRoutes);
+router.use('/addresses', addressRoutes);
+router.use('/cart', cartRoutes);
+router.use('/orders', orderRoutes);
 
 export default router;

@@ -277,6 +277,7 @@ model Address {
   address   String
   latitude  Float
   longitude Float
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
   orders Order[]
@@ -298,35 +299,42 @@ model Cart {
 model CartItem {
   id        String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   cartId    String @map("cart_id") @db.Uuid
-  productId String @map("product_id") @db.Uuid
-  quantity  Int    @default(1)
+  productId String   @map("product_id") @db.Uuid
+  quantity  Int      @default(1)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   cart    Cart    @relation(fields: [cartId], references: [id], onDelete: Cascade)
   product Product @relation(fields: [productId], references: [id])
 
+  @@unique([cartId, productId])
   @@index([cartId])
   @@map("cart_items")
 }
 
-// ---- Phase 2 groundwork (tables exist; endpoints come next) ----
+// ---- Orders ----
 
 model Order {
-  id          String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  orderNumber String      @unique @map("order_number")
-  customerId  String      @map("customer_id") @db.Uuid
-  branchId    String      @map("branch_id") @db.Uuid
-  addressId   String      @map("address_id") @db.Uuid
-  subtotal    Decimal     @db.Decimal(14, 2)
-  deliveryFee Decimal     @map("delivery_fee") @db.Decimal(14, 2)
-  serviceFee  Decimal     @default(0) @map("service_fee") @db.Decimal(14, 2)
-  total       Decimal     @db.Decimal(14, 2)
-  status      OrderStatus @default(PENDING)
-  createdAt   DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt   DateTime    @updatedAt @map("updated_at") @db.Timestamptz(6)
+  id               String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orderNumber      String      @unique @map("order_number")
+  customerId       String      @map("customer_id") @db.Uuid
+  branchId         String      @map("branch_id") @db.Uuid
+  // Saved addresses can be edited or deleted later, so the order keeps its own copy.
+  addressId        String?     @map("address_id") @db.Uuid
+  deliveryAddress  String      @map("delivery_address")
+  deliveryLatitude  Float      @map("delivery_latitude")
+  deliveryLongitude Float      @map("delivery_longitude")
+  notes            String?
+  subtotal         Decimal     @db.Decimal(14, 2)
+  deliveryFee      Decimal     @map("delivery_fee") @db.Decimal(14, 2)
+  serviceFee       Decimal     @default(0) @map("service_fee") @db.Decimal(14, 2)
+  total            Decimal     @db.Decimal(14, 2)
+  status           OrderStatus @default(PENDING)
+  createdAt        DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime    @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   customer       User                 @relation(fields: [customerId], references: [id])
   branch         MerchantBranch       @relation(fields: [branchId], references: [id])
-  address        Address              @relation(fields: [addressId], references: [id])
+  address        Address?             @relation(fields: [addressId], references: [id], onDelete: SetNull)
   items          OrderItem[]
   statusHistory  OrderStatusHistory[]
   payment        Payment?
